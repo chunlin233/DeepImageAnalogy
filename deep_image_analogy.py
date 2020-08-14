@@ -5,7 +5,8 @@ from PatchMatchOrig import init_nnf, upSample_nnf, avg_vote, propagate, reconstr
 from VGG19 import VGG19
 from utils import *
 
-def deep_image_analogy(A,BP,config):
+
+def deep_image_analogy(A, BP, config, writer):
     alphas = config['alpha']
     nnf_patch_size = config['nnf_patch_size']
     radii = config['radii']
@@ -33,10 +34,13 @@ def deep_image_analogy(A,BP,config):
     
         #ANN init step, coarsest layer is initialized randomly,
         #Other layers is initialized using upsample technique described in the paper
+        print('='*30 + 'deep analogy on layer{}'.format(curr_layer) + '='*30)
         if curr_layer == 0:
+            # initialize NNF
             ann_AB = init_nnf(F_A_size[curr_layer][2:], F_B_size[curr_layer][2:])
             ann_BA = init_nnf(F_B_size[curr_layer][2:], F_A_size[curr_layer][2:])
         else:
+            # NNF upsampling
             ann_AB = upSample_nnf(ann_AB, F_A_size[curr_layer][2:])
             ann_BA = upSample_nnf(ann_BA, F_B_size[curr_layer][2:])
 
@@ -45,13 +49,15 @@ def deep_image_analogy(A,BP,config):
         F_A_BAR, response_A = normalize(F_A[curr_layer])
         F_BP_BAR, response_BP = normalize(F_BP[curr_layer])
         
-        # F_AP&F_B is reconstructed according to Equotion(4)
+        # F_AP & F_B is reconstructed according to Equotion(4)
         # Note that we reuse the varibale F_AP here,
         # it denotes the RBprime as is stated in the  Equotion(4) which is calculated
         # at the end of the previous iteration
         F_AP[curr_layer] = blend(response_A, F_A[curr_layer], F_AP[curr_layer], alphas[curr_layer])
         F_B[curr_layer] = blend(response_BP, F_BP[curr_layer], F_B[curr_layer], alphas[curr_layer])
-        
+
+        visualize_deep_image_analogy(writer, F_A, F_AP, F_B, F_BP, curr_layer)
+
         # Normalize F_AP&F_B as well
         F_AP_BAR, _ = normalize(F_AP[curr_layer])
         F_B_BAR, _ = normalize(F_B[curr_layer])
@@ -95,9 +101,9 @@ def deep_image_analogy(A,BP,config):
         target_A = np2ts(target_A_np)
         
         #LBFGS algorithm to approximate R_B' and R_A
-        F_AP[curr_layer+1] = model.get_deconvoluted_feat(target_BP, curr_layer, F_AP[next_layer], lr=lr[curr_layer],
+        F_AP[curr_layer+1] = model.get_deconvoluted_feat(writer, target_BP, curr_layer, F_AP[next_layer], feat_name='BP', lr=lr[curr_layer],
                                                          blob_layers=params['layers'])
-        F_B[curr_layer+1] = model.get_deconvoluted_feat(target_A, curr_layer, F_B[next_layer], lr=lr[curr_layer],
+        F_B[curr_layer+1] = model.get_deconvoluted_feat(writer, target_A, curr_layer, F_B[next_layer], feat_name='A', lr=lr[curr_layer],
                                                          blob_layers=params['layers'])
 
         if type(F_B[curr_layer + 1]) == torch.DoubleTensor:
@@ -108,6 +114,7 @@ def deep_image_analogy(A,BP,config):
             F_AP[curr_layer + 1] = F_AP[curr_layer + 1].type(torch.cuda.FloatTensor)
     
     # Obtain the output according to 4.5
+    print('='*30 + 'deep analogy on layer5' + '='*30)
     img_AP = reconstruct_avg(ann_AB, BP, nnf_patch_size[curr_layer], F_A_size[curr_layer][2:], F_B_size[curr_layer][2:])
     img_B = reconstruct_avg(ann_BA, A, nnf_patch_size[curr_layer], F_A_size[curr_layer][2:], F_B_size[curr_layer][2:])
 
@@ -116,8 +123,10 @@ def deep_image_analogy(A,BP,config):
     return img_AP, img_B
 
 
-
-
-
-
-
+def visualize_deep_image_analogy(writer, F_A, F_AP, F_B, F_BP, curr_layer):
+    from torchvision.utils import make_grid
+    name = ['F_A', 'F_AP', 'F_B', 'F_BP']
+    for i, F in enumerate([F_A, F_AP, F_B, F_BP]):
+        img = F[curr_layer].detach()[0, :10].unsqueeze(1)
+        img = make_grid(img, nrow=5, normalize=True)
+        writer.add_image("feature map {}".format(name[i]), img, curr_layer)

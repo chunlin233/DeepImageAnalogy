@@ -4,12 +4,14 @@ import cv2
 import numpy as np
 import torch
 
+# output: H x W x C
 def ts2np(x):
     x = x.squeeze(0)
     x = x.cpu().numpy()
     x = x.transpose(1,2,0)
     return x
 
+# output: C x H x W
 def np2ts(x):
     x = x.transpose(2,0,1)
     x = torch.from_numpy(x)

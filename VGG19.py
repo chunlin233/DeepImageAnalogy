@@ -25,16 +25,18 @@ class FeatureExtractor(nn.Sequential):
 class VGG19:
     def __init__(self):
 
-        pretrained_weights = "https://s3-us-west-2.amazonaws.com/jcjohns-models/vgg19-d01eb7cb.pth"
         vgg19_model = models.vgg19(pretrained=False)
-        vgg19_model.load_state_dict(model_zoo.load_url(pretrained_weights), strict=False)
+        # pretrained_weights = "https://s3-us-west-2.amazonaws.com/jcjohns-models/vgg19-d01eb7cb.pth"
+        # vgg19_model.load_state_dict(model_zoo.load_url(pretrained_weights), strict=False)
+        pretrained_weights = 'vgg19-dcbb9e9d.pth'
+        vgg19_model.load_state_dict(torch.load(pretrained_weights), strict=False)
         self.vgg19_features = vgg19_model.features
         self.model = FeatureExtractor()  # the new Feature extractor module network
         conv_counter = 1
         relu_counter = 1
         block_counter = 1
         
-        # build feature extractor
+        # build feature extractor, 相当于重命名了, layer并没有改变
         for i, layer in enumerate(list(self.vgg19_features)):
 
             if isinstance(layer, nn.Conv2d):
@@ -57,12 +59,18 @@ class VGG19:
         self._mean = (103.939, 116.779, 123.68)
 
     def forward_subnet(self, input_var, start_index, end_index):
+        """
+        将input_var输入model，从start_index层执行到end_index层，输出最后的feature map
+        """
         for i, layer in enumerate(list(self.model)):
             if i >= start_index and i <= end_index:
                 input_var = layer(input_var)
         return input_var
 
-    def get_features(self, img_tensor, layers):       
+    def get_features(self, img_tensor, layers):
+        """
+        把选中层layers的feature map都提取出来, [F5,F4,F3,F2,F1,INPUT]
+        """
         img_tensor = img_tensor.cuda()
         for channel in range(3):
             img_tensor[:, channel, :, :] -= self._mean[channel]
@@ -78,8 +86,15 @@ class VGG19:
         sizes = [f.size() for f in features]
         return features, sizes
 
-    def get_deconvoluted_feat(self, feat, curr_layer, init=None, lr=10,blob_layers=[29,20,11,6,1]):
-
+    def get_deconvoluted_feat(self, writer, feat, curr_layer, init=None, feat_name='', lr=10, blob_layers=[29, 20, 11, 6, 1]):
+        """
+        -----------------input-----------------: 
+        (1) feat: target feature->F_BP(nnf_AB) of end_layer (blob_layers[curr_layer])
+        (2) curr_layer: curr_laye in range(5);
+        (3) init(noise): input feature->the feature map of the layer that two layers ahead the curr_layer, F_BP(nnf_AB) of mid_layer (blob_layers[curr_layer+2])
+        -----------------output-----------------:
+        (4) out: the feature which is the output of inputing the optimized noise feature into model from start_layer to mid_layer;
+        """
         blob_layers = blob_layers+[-1]
         end_layer = blob_layers[curr_layer]
         mid_layer = blob_layers[curr_layer + 1]
@@ -108,19 +123,28 @@ class VGG19:
             return loss
         for i in range(25):
             loss = optimizer.step(closure)
-            print("LBFGS iter:{} Loss:{}".format((i+1)*20,loss.data[0]))            
+            print("LBFGS iter:{} Loss:{}".format((i+1)*20, loss.item()))
+            self.visualize_deconvolute_loss(
+                writer, loss, i, curr_layer, feat_name)
+
+        self.visualize_deconvolute_noise(
+            writer, target, noise, i, curr_layer, feat_name)
+
         noise = noise.type(torch.cuda.FloatTensor)
         out = self.forward_subnet(input_var=noise, start_index=start_layer, end_index=mid_layer)
         elapse_time = time.time() - t_begin
         print("Deconvolution Finished, Elapsed: {:.2f}s".format(elapse_time))
         return out.data
 
+    def visualize_deconvolute_loss(self, writer, loss, iter_num, curr_layer, feat_name):
+        writer.add_scalar("deconv loss on layer{} for {}".format(
+            curr_layer, feat_name), loss, iter_num)
 
-
-
-
-
-
-
-
-
+    def visualize_deconvolute_noise(self, writer, target, noise, iter_num, curr_layer, feat_name):
+        from torchvision.utils import make_grid
+        img_target = make_grid(
+            target[0, :10].unsqueeze(1), nrow=5, normalize=True)
+        img_noise = make_grid(
+            noise[0, :10].unsqueeze(1), nrow=5, normalize=True)
+        writer.add_image("target for {}".format(feat_name), img_target, curr_layer)
+        writer.add_image("noise for {}".format(feat_name), img_noise, curr_layer)

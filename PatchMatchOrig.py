@@ -19,6 +19,13 @@ def init_nnf(size, B_size=None):
 
 
 def upSample_nnf(nnf, size=None):
+    """
+    -----------------input-----------------: 
+    (1) nnf: nearest neighber field A->B for certain layer, size = H x W x 2;
+    (2) size: target size(H', W') after upSampling in next layer;
+    -----------------output-----------------: 
+    (3) target: nearest neighber field A->B after upSampling, size = H' x W' x 2;
+    """
     ah, aw = nnf.shape[:2]
 
     if size is None:
@@ -42,10 +49,20 @@ def upSample_nnf(nnf, size=None):
 
 
 def avg_vote(nnf, img, patch_size, A_size, B_size):
+    """
+    -----------------input-----------------: 
+    (1) nnf: nearest neighber field A->B for certain layer, size = A_size[0] x A_size[1] x 2 (or B->A)
+    (2) img: F_BP[layer]
+    (3) patch_size: search radius
+    (4) A_size: ah, aw
+    (5) B_size: bh, bw
+    -----------------output-----------------:
+    (6) final: F_BP(nnf_AB), size = A_size[0] x A_size[1] x F_BP[layer].size[2] (H x W x C)
+    """
     assert img.shape[0] == B_size[0] and img.shape[1] == B_size[1], "[{},{}], [{},{}]".format(img.shape[0],
                                                                                               img.shape[1], B_size[0],
                                                                                               B_size[1])
-    final = np.zeros(list(A_size) + [img.shape[2], ])
+    final = np.zeros(list(A_size) + [img.shape[2], ])  
     ah, aw = A_size
     bh, bw = B_size
     for ay in range(A_size[0]):
